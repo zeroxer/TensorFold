@@ -1,0 +1,20 @@
+Publication validation, 2026-11-14
+
+This is an experimental fork snapshot, not an upstream pull request or a release.
+The copied implementation is the integrated source used by the recorded development checks.
+The publication changes to the historical reference are explanatory comments/documentation only.
+
+Local preflight:
+  git diff --check: passed.
+  python tools/pr_check.py --base aaac299d1d90c2625e54cb50f3f0d1494c1c33ea:
+    0 errors; lean 341 versus baseline 341, zero new findings.
+    One advisory: no PR number / Unreleased PR line, because no PR is being opened.
+
+ATC fork board: complete, no contributors, issues, PRs or remote overlaps.
+The overlap command also compared author-owned development worktrees: the original snapshot
+and the historical batch worker differed in 2 and 12 files. The publication explicitly selects
+the reviewed integrated source plus the clarified fidelity documentation. Historical worktrees
+are retained; they are not being merged or submitted as competing upstream contributions.
+
+The GPU/host receipts and unrun upstream qualification gates are described in INKLING2_EXPERIMENT.txt
+and zig/src/families/inkling2/README.txt. Historical CLI performance is not a 32K HTTP benchmark.

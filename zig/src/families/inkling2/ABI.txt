@@ -1,0 +1,232 @@
+Experimental Inkling2 source notes and CUDA ABI
+Full comment notes moved here to follow the repository single-line comment rule.
+Line numbers identify the original development comments; current headers declare the APIs.
+The native server is not registered by this prototype. Kernel-contract release qualification is pending.
+
+zig/kernels/cuda/inkling2_attention.cu:1
+Inkling2 one-token attention primitives. Activations are floats carrying BF16-rounded values.
+These are bringup kernels, not a qualified serving path. Compile without contraction or fast math.
+
+zig/kernels/cuda/inkling2_attention.cu:82
+Grid [ceil((pos+1)/256),heads], block 256, no shared. Scores [heads,capacity].
+Keys outside the sliding window get -Inf; global keys older than extent have no relative term.
+
+zig/kernels/cuda/inkling2_quant.cu:1
+Inkling2 quantized expert path, bringup kernels: BF16 dense matvec, NVFP4 (four-over-six MAE)
+and MXFP8 activation quantize/dequantize, and the matching quantized matvec over stored expert
+weights. Activations are fp32 arrays holding BF16-rounded values; weights are the checkpoint's
+stored row-major bytes. Bringup kernels, not a qualified serving path.
+
+Compile without fast math and without ftz: subnormal fp32 intermediates (1 / FLT_MAX etc.) must
+survive. Every arithmetic step of the quantization formulas is an explicit __f*_rn intrinsic, so
+fmad contraction cannot change a rounding; the matvec sums likewise use __fadd_rn(__fmul_rn()).
+
+The equations are the deployment reference's quantization formulas (speed-overlay inkling2
+ops/nvfp4.py, four-over-six MAE scale choice, and ops/mxfp8.py, ceil-power-of-two ue8m0 block
+scales, Apache-2.0); this is an independent TensorFold implementation of those equations.
+
+zig/kernels/cuda/inkling2_quant.cu:48
+|v| to the nearest e2m1 magnitude code (ties to the even code, saturating at 6) with v's sign,
+the cvt.rn.satfinite.e2m1 semantics of the reference: sign preserved, also for rounded zeros.
+
+zig/kernels/cuda/inkling2_quant.cu:93
+A ue8m0 exponent byte's scale 2^(e-127): e 0 is the 2^-127 subnormal scale, e 255 is NaN, so
+nonfinite scale bytes propagate by IEEE multiplication in the matvec instead of being masked.
+
+zig/kernels/cuda/inkling2_quant.cu:108
+Grid [N], block 256, shared 1024 B. W row-major [N,K] BF16, x and y fp32 (BF16-valued), no
+aliasing. Thread t sums x[t], x[t+256], ... times W's row in k order, then the 256 partials go
+through one fixed halving tree; y[n] is the fp32 sum, BF16-rounded when round_bf16 != 0.
+
+zig/kernels/cuda/inkling2_quant.cu:124
+Grid [1], block 256, shared 19 KB. One full row of K inputs (K % 32 == 0, K <= 4608; the amax
+format 0: NVFP4 four-over-six MAE; format 1: MXFP8. One nonfinite input NaNs the whole row
+(explicit propagation, not masking); an all-zero NVFP4 row reconstructs to all zeros.
+
+zig/kernels/cuda/inkling2_quant.cu:212
+Grid [N], block 256, shared 1024 B. x is the activation row already quantize/dequantize
+reconstructed to fp32 (tf_ink2_quant's y), full K, no TP sharding. Output rows keep the stored
+order (gate/up interleaved); downstream de-interleaves. Weight values decode on the fly, no
+requantization; sums are fp32, thread t over k = t, t+256, ... then the fixed 256-lane tree;
+y[n] is BF16-rounded when round_bf16 != 0. NaN/inf inputs propagate by IEEE arithmetic.
+
+format 0 (NVFP4, K % 16 == 0): w row-major [N,K/2] e2m1 packed low nibble first, scales
+[N,K/16] e4m3 bytes; weight = (e2m1 * scale) * outer with outer = amax[0]/denom[0], the
+per-expert scalar the caller has already offset (not per output row).
+format 1 (MXFP8, K % 32 == 0): w row-major [N,K] e4m3 bytes, scales [N,K/32] ue8m0 exponent
+bytes; weight = e4m3 * 2^(e-127); amax and denom are ignored.
+
+zig/kernels/cuda/inkling2_quant.cuh:1
+ABI of the Inkling2 quantized expert-path bringup kernels (inkling2_quant.cu).
+Bringup kernels, not a qualified serving path; no release qualification is claimed.
+
+Compile the .cu without fast math and without ftz (subnormal fp32 quantization intermediates
+such as 1 / FLT_MAX must survive). All quantization arithmetic uses __f*_rn intrinsics, so fmad
+contraction cannot alter a rounding; the reductions are fp32, never half.
+
+Layouts follow the checkpoint's target weight schema: NVFP4 experts store w13 as U8
+[experts,4608,2304] (K = 4608 hidden, two e2m1 nibbles a byte, low nibble first) with e4m3
+block scales [experts,4608,288] (K/16) and per-expert fp32 amax plus one fp32 denominator;
+w2 is [experts,4608,1152] (K = 2304) with scales [experts,4608,144]. MXFP8 experts store
+w13 as E4M3 [experts,4608,4608] with ue8m0 scale bytes [experts,4608,144] (K/32); w2 is
+[experts,4608,2304] with scales [experts,4608,72]. Gate/up rows stay interleaved as stored.
+
+zig/kernels/cuda/inkling2_quant.cuh:20
+y[N] = W[N,K] * x[K], W row-major BF16 bits, x/y fp32 (activations hold BF16-rounded values).
+Grid [N], block 256 (__launch_bounds__ 256), shared 1024 B. fp32 accumulation: thread t sums
+x[t], x[t+256], ... in k order, then one fixed 256-lane halving tree; repeat launches are
+byte-identical. round_bf16 != 0 rounds y to the BF16 grid (returned as float); 0 keeps fp32.
+Guaranteed-safe ranges and no input/output aliasing are the caller's contract.
+
+zig/kernels/cuda/inkling2_quant.cuh:28
+One row: y[K] = dequantize(quantize(x[K])), reconstructed fp32 values, never re-rounded to
+BF16. Grid [1], block 256, shared 19 KB (the row is staged in shared memory). Admitted
+dimensions: K % 32 == 0 and K <= 4608 (served rows are 4608 and 2304); the amax spans the
+whole row. format 0 = NVFP4 four-over-six MAE, 1 = MXFP8.
+
+NVFP4: per-token scale 1536/amax; each 16-input block tries 6.0- and 4.0-based e4m3 block
+scales (products capped at 448 before the e4m3 round), e2m1 codes rounded to nearest with
+ties to the even code and saturation at 6, and keeps the candidate whose absolute
+reconstruction error, summed pairwise over 4 tree levels, is smaller (ties keep 6.0). An
+all-zero row reconstructs to all zeros. MXFP8: block 32, ue8m0 scale ceil(amax/448) to a
+power of two clamped to exponent 254, 2^-127 subnormal minimum at exponent 0, e4m3 codes
+rounded to nearest saturating at +-448.
+
+NaN policy: any nonfinite input NaNs the entire output row (explicit propagation); finite
+rows produce only finite arithmetic except documented saturation.
+
+zig/kernels/cuda/inkling2_quant.cuh:45
+y[N] = W * x over one expert's stored quantized weight rows; x is tf_ink2_quant's
+reconstructed fp32 activation row, full K, never TP-sharded. Grid [N], block 256, shared
+1024 B; fp32 accumulation with the same fixed order as tf_ink2_dense, weights decoded on the
+fly with no requantization; round_bf16 != 0 rounds y to the BF16 grid. Output rows keep the
+stored order; downstream de-interleaves gate/up.
+
+format 0 (admission K % 16 == 0): w row-major [N,K/2] packed e2m1 low nibble first, scales
+[N,K/16] e4m3; weight = (e2m1 * scale) * (amax[0] / denom[0]), where amax/denom are the
+per-expert scalars already offset by the caller, not per output row. format 1 (admission
+K % 32 == 0): w row-major [N,K] e4m3, scales [N,K/32] ue8m0 exponent bytes; weight =
+e4m3 * 2^(e-127) with exponent byte 0 the 2^-127 subnormal scale; amax and denom are ignored.
+
+NaN policy: no masking; nonfinite x, weights, scales, amax or denom propagate through the
+IEEE fp32 arithmetic (a ue8m0 exponent byte 255 is NaN, an e4m3 NaN byte decodes to NaN).
+
+zig/kernels/cuda/inkling2_rows.cu:1
+Inkling-2 one-token bringup row kernels, TF-owned from the reference equations
+(references/gr8/engine/ref/ink2/ink2_cpu_ref.h; independent oracle, nothing copied).
+Deterministic by construction: fixed launches, no atomics, no allocator, fp32 sums in a fixed
+order (no fmad contraction: every mul/add is an explicit __fmul_rn / __fadd_rn), and one
+__float2bfloat16_rn rounding at each BF16 boundary the reference states.
+
+zig/kernels/cuda/inkling2_rows.cu:23
+fp32 block sum: strided local sums ascending, a warp xor tree, warp partials in warp order.
+Trailing barrier keeps the scratch safe to reuse; every thread returns the same bits.
+
+zig/kernels/cuda/inkling2_rows.cu:59
+(2) Depth attention over the finished blocks plus the partial residual, one token; values are the
+    RMS-normalized rows U, softmax over depth + 1; grid (queries), 256 threads, 416 B shared.
+
+zig/kernels/cuda/inkling2_rows.cu:113
+(3) Short causal convolution over 4 taps plus the residual, one token; the history keeps RAW x and
+    shifts only after every old value is read, each thread its own channel; grid (1), no shared.
+
+zig/kernels/cuda/inkling2_rows.cu:156
+(5) y = BF16(4*tanh(g/4) * sigmoid(g) * 25*tanh(u/25) * gamma), interleaved gu[g0,u0,...].
+    grid (ceil(I/256)), 256 threads, no shared.
+
+zig/kernels/cuda/inkling2_rows.cu:181
+(6) Router: sigmoid scores, topk by score + bias (ties to the lower id), unbiased renormalized
+    weights; grid (1), 256 threads, 10304 B shared. Non-finite input or invalid shape fails closed.
+
+zig/kernels/cuda/inkling2_rows.cuh:1
+Inkling-2 one-token bringup row kernels: exact ABI and launch contracts (inkling2_rows.cu holds the
+implementations, written from the reference equations; every kernel is deterministic: no atomics, no
+allocator, fixed launch, fp32 sums in a fixed order and one BF16 rounding at each stated boundary).
+
+Common conventions
+  * Activation arrays are float but hold BF16-rounded values where a boundary says so: an output
+    written "BF16" is __float2bfloat16_rn(value) widened back to float, one rounding, ties to even.
+  * A "BF16 row" weight is uint16_t BF16 bits widened exactly (__bfloat16asfloat), never re-rounded.
+  * Reductions: each thread sums its strided elements ascending, a warp xor tree, then warp partials
+    in warp order. Same launch -> same bytes, run to run.
+  * Non-finite inputs are never masked: NaN/Inf flow through the formula (fmaxf keeps the finite side
+    of a max, a NaN sum stays NaN), except tf_ink2_route, which is fail closed (below).
+  * Pointers are non-aliasing unless a kernel says otherwise; nothing is written in place.
+  * Grid/block: every kernel takes 256 threads a block (__launch_bounds__(256)); per-kernel grids and
+    static shared bytes are listed per kernel. Launch at other widths is not part of the contract.
+
+zig/kernels/cuda/inkling2_rows.cuh:24
+(1) Weighted RMSNorm, one row: y[c] = BF16(w[c] * (x[c] * rsqrt(mean(x^2) + eps))), mean over H,
+    the x * r product innermost as the reference writes it. w is a BF16 row of H weights.
+    Grid (1,1,1), block 256, 32 B shared. H >= 1 or the kernel returns without writing.
+
+zig/kernels/cuda/inkling2_rows.cuh:29
+(2) Depth attention over finished blocks plus the partial residual, one token: rows d in [0, depth)
+    are states[d * H ..], row depth is partial[H]; U[d] = s_d * rsqrt(mean(s_d^2) + eps), no affine.
+    logits l[q][d] = (query[q] . U[d]) / sqrt(H); softmax over depth + 1 rows; values are U itself.
+    y[q * H + c] = BF16(sum_d softmax * U[d][c]), d ascending. The query row is used as given (the
+    loader applies no rescale). Grid (queries,1,1), block 256, 416 B shared. depth in [0, 31],
+    H >= 1; outside that every y row of the block is the quiet NaN 0x7fc00000 and nothing else runs.
+
+zig/kernels/cuda/inkling2_rows.cuh:38
+(3) Short causal convolution, taps 0..3, one token: hist[3 * H] holds the RAW previous inputs
+    ordered previous1, previous2, previous3 (lag 1..3); x[H] is the current token; lag 0 is x itself.
+    y[c] = BF16((x[c] + sum_{lag 0..3} tap[lag][c] * x[c - lag]) / divisor), the residual x added
+    once on top of the lag-0 tap, taps summed ascending. After every old value is read the history
+    shifts one row and stores the RAW x: previous3 drops, previous2 -> 3, previous1 -> 2, x -> 1;
+    a thread touches only its own channel, so x, y and hist must not alias.
+    Tap layouts (checked against the checkpoint schema and the CPU reference):
+      shared_taps == 0 (static, divisor sqrt(5)): w is the BF16 [H,4] channel-major conv weight and
+        the tap is REVERSED: lag L reads w[c * 4 + (3 - L)], so lag 0 reads index 3.
+      shared_taps != 0 (dynamic, divisor 3): w is the BF16 [4,H] lag-major static_w read DIRECTLY,
+        w[L * H + c]; dyn is nullable [H/head_dim, 4] fp32 precomputed taps, dyn[h * 4 + L] with
+        h = c / head_dim, also DIRECT lag (weight_proj row h * 4 + L); tap = static + dyn.
+    Grid (1,1,1), block 256, no shared. H >= 1. In static mode dyn is ignored (pass nullptr).
+    shared_taps != 0 with dyn != nullptr needs head_dim in [1, H] dividing H; otherwise y is the
+    quiet NaN 0x7fc00000 and the history is left untouched.
+
+zig/kernels/cuda/inkling2_rows.cuh:56
+(4) Residual add, one row: z[i] = BF16((replace ? 0 : x[i]) + y[i]); replace != 0 drops x (a block
+    boundary replaces the residual). x, y, z do not alias. Grid (ceil(H/256),1,1), block 256, none.
+
+zig/kernels/cuda/inkling2_rows.cuh:60
+(5) Softcapped SwiGLU, gu[g0,u0,g1,u1,...] in stored row order, already BF16-rounded.
+    y[c] = BF16((4*tanh(g/4))*sigmoid(g)*(25*tanh(u/25))*gamma), sigmoid on the RAW gate.
+    Apply the unbiased routing gamma BEFORE BF16 rounding and fc2 activation quantization.
+    Grid (ceil(I/256),1,1), block 256, no shared. I >= 1.
+
+zig/kernels/cuda/inkling2_rows.cuh:66
+(6) Router, one token: logits[E] fp32 (router projection output), bias[E] fp32 (required).
+    score[e] = sigmoid(logits[e]); picks are the topk maxima of score[e] + bias[e], ties to the
+    LOWER expert id, taken in descending order; the selection weight is the UNBIASED score:
+    weights[k] = scale * score[ids[k]] / (sum of the picked scores + 1e-20), the sum accumulated in
+    pick order. Grid (1,1,1), block 256, 10304 B shared. Valid shapes: E in [1, 2048], topk in
+    [1, 32] with topk <= E. Fail closed, never a silent mask: any non-finite logits[e] or bias[e],
+    or any invalid shape, writes ids[k] = -1 and weights[k] = quiet NaN 0x7fc00000 for
+    k < min(topk, 32) (topk <= 0 writes nothing) and selects nothing.
+
+zig/src/core/template/float_filter.zig:1
+Jinja2's `float` filter: Python's float() where it succeeds, and the filter's `default`
+(0.0) where Python raises TypeError or ValueError. Undefined keeps raising, because
+Undefined.__float__ raises UndefinedError, which do_float does not catch.
+
+zig/src/core/template/float_filter.zig:87
+A run of digits with single underscores between them, as Python's grammar allows; the run's
+digits append to `out` without the underscores, and null means the run had no digit at all.
+
+zig/src/core/template/float_filter.zig:128
+Unicode 16.0 Numeric_Type=Decimal starts; ten consecutive codepoints per decimal alphabet.
+Source: unicode.org/Public/16.0.0/ucd/extracted/DerivedNumericType.txt (Unicode data license).
+
+CPU reference scope
+Independent CPU equation oracle for Inkling2's first layer, from unchanged HF safetensors.
+
+This development reference imports NumPy, never CUDA, Torch or the tested native implementation.
+Projection/attention/residual sums use float64. Checkpoint quantization and BF16 boundaries are explicit.
+It models EP4 with whole experts and the routing weight applied before the down activation quantization.
+
+
+Unicode decimal table attribution
+Unicode 16.0.0 Numeric_Type=Decimal. Copyright 2024 Unicode, Inc.
+https://www.unicode.org/Public/16.0.0/ucd/extracted/DerivedNumericType.txt
+https://www.unicode.org/terms_of_use.html

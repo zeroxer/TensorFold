@@ -1,0 +1,216 @@
+[
+  {
+    "name": "effort-None",
+    "messages": [
+      {
+        "role": "user",
+        "content": "你好，计算 17×23。"
+      }
+    ],
+    "context": {},
+    "tools": null,
+    "expected": "<|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>你好，计算 17×23。<|end_message|>"
+  },
+  {
+    "name": "effort-none",
+    "messages": [
+      {
+        "role": "user",
+        "content": "你好，计算 17×23。"
+      }
+    ],
+    "context": {
+      "reasoning_effort": "none"
+    },
+    "tools": null,
+    "expected": "<|message_system|><|content_text|>Thinking effort level: 0<|end_message|><|message_user|><|content_text|>你好，计算 17×23。<|end_message|>"
+  },
+  {
+    "name": "effort-high",
+    "messages": [
+      {
+        "role": "user",
+        "content": "你好，计算 17×23。"
+      }
+    ],
+    "context": {
+      "reasoning_effort": "high"
+    },
+    "tools": null,
+    "expected": "<|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>你好，计算 17×23。<|end_message|>"
+  },
+  {
+    "name": "effort-max",
+    "messages": [
+      {
+        "role": "user",
+        "content": "你好，计算 17×23。"
+      }
+    ],
+    "context": {
+      "reasoning_effort": "max"
+    },
+    "tools": null,
+    "expected": "<|message_system|><|content_text|>Thinking effort level: 0.99<|end_message|><|message_user|><|content_text|>你好，计算 17×23。<|end_message|>"
+  },
+  {
+    "name": "effort-0.9",
+    "messages": [
+      {
+        "role": "user",
+        "content": "你好，计算 17×23。"
+      }
+    ],
+    "context": {
+      "reasoning_effort": 0.9
+    },
+    "tools": null,
+    "expected": "<|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>你好，计算 17×23。<|end_message|>"
+  },
+  {
+    "name": "effort-0",
+    "messages": [
+      {
+        "role": "user",
+        "content": "你好，计算 17×23。"
+      }
+    ],
+    "context": {
+      "reasoning_effort": 0
+    },
+    "tools": null,
+    "expected": "<|message_system|><|content_text|>Thinking effort level: 0<|end_message|><|message_user|><|content_text|>你好，计算 17×23。<|end_message|>"
+  },
+  {
+    "name": "effort-0.99",
+    "messages": [
+      {
+        "role": "user",
+        "content": "你好，计算 17×23。"
+      }
+    ],
+    "context": {
+      "reasoning_effort": 0.99
+    },
+    "tools": null,
+    "expected": "<|message_system|><|content_text|>Thinking effort level: 0.99<|end_message|><|message_user|><|content_text|>你好，计算 17×23。<|end_message|>"
+  },
+  {
+    "name": "effort-unknown",
+    "messages": [
+      {
+        "role": "user",
+        "content": "你好，计算 17×23。"
+      }
+    ],
+    "context": {
+      "reasoning_effort": "unknown"
+    },
+    "tools": null,
+    "error": "Unknown reasoning_effort: unknown"
+  },
+  {
+    "name": "effort-1.0",
+    "messages": [
+      {
+        "role": "user",
+        "content": "你好，计算 17×23。"
+      }
+    ],
+    "context": {
+      "reasoning_effort": 1.0
+    },
+    "tools": null,
+    "error": "reasoning_effort must be in [0.0, 0.99]"
+  },
+  {
+    "name": "system",
+    "messages": [
+      {
+        "role": "system",
+        "content": "请使用中文。"
+      },
+      {
+        "role": "user",
+        "content": "Hello"
+      }
+    ],
+    "context": {},
+    "tools": null,
+    "expected": "<|message_system|><|content_text|>请使用中文。<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>Hello<|end_message|>"
+  },
+  {
+    "name": "tools",
+    "messages": [
+      {
+        "role": "user",
+        "content": "北京天气"
+      },
+      {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "call1",
+            "function": {
+              "name": "weather",
+              "arguments": {
+                "city": "北京"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "call1",
+        "content": "晴，20℃"
+      },
+      {
+        "role": "assistant",
+        "reasoning_content": "已获取天气",
+        "content": "北京晴。"
+      }
+    ],
+    "context": {
+      "reasoning_effort": "high"
+    },
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "weather",
+          "description": "查天气",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "city": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    ],
+    "expected": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"查天气\",\"name\":\"weather\",\"parameters\":{\"properties\":{\"city\":{\"type\":\"string\"}},\"type\":\"object\"},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>北京天气<|end_message|><|message_model|>weather<|content_invoke_tool_json|>{\"name\":\"weather\",\"args\":{\"city\":\"北京\"}}<|end_message|><|content_model_end_sampling|><|message_tool|>weather<|content_text|>晴，20℃<|end_message|><|message_model|><|content_thinking|>已获取天气<|end_message|><|message_model|><|content_text|>北京晴。<|end_message|><|content_model_end_sampling|>"
+  },
+  {
+    "name": "refuse-string-tool-args",
+    "messages": [
+      {
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "function": {
+              "name": "weather",
+              "arguments": "{}"
+            }
+          }
+        ]
+      }
+    ],
+    "context": {},
+    "tools": null,
+    "error": "tool call arguments must be a parsed object, not a JSON string; canonicalize upstream"
+  }
+]

@@ -27,7 +27,12 @@ pub const Packer = struct {
 
     pub fn load(d: *const Driver) !Packer {
         if (!kernels.available) return error.BuiltWithoutKernels;
-        var mod = try Module.load(d, kernels.modelopt_pack);
+        return loadImage(d, kernels.modelopt_pack);
+    }
+
+    /// Load the maintained lossless layout packers without making checkpoint-format admission decisions.
+    pub fn loadImage(d: *const Driver, image: []const u8) !Packer {
+        var mod = try Module.load(d, image);
         errdefer mod.unload();
         return .{
             .mod = mod,

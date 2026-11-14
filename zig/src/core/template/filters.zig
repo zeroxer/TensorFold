@@ -6,13 +6,14 @@ const access = @import("access.zig");
 const methods = @import("methods.zig");
 const pyjson = @import("pyjson.zig");
 const eval = @import("eval.zig");
+const float_filter = @import("float_filter.zig");
 const Value = v.Value;
 const Error = v.Error;
 const Kw = methods.Kw;
 const Ctx = eval.Ctx;
 const bind = methods.bind;
 
-pub const implemented = [_][]const u8{ "default", "d", "length", "count", "string", "trim", "upper", "lower", "capitalize", "safe", "tojson", "fromjson", "items", "dictsort", "join", "list", "map", "first", "last", "unique", "reverse", "sort", "select", "reject", "selectattr", "rejectattr", "indent", "replace", "escape", "e" };
+pub const implemented = [_][]const u8{ "default", "d", "length", "count", "string", "trim", "upper", "lower", "capitalize", "safe", "tojson", "fromjson", "items", "dictsort", "join", "list", "map", "first", "float", "last", "unique", "reverse", "sort", "select", "reject", "selectattr", "rejectattr", "indent", "replace", "escape", "e" };
 const jinja_filters = [_][]const u8{ "abs", "attr", "batch", "capitalize", "center", "count", "d", "default", "dictsort", "e", "escape", "filesizeformat", "first", "float", "forceescape", "format", "groupby", "indent", "int", "items", "join", "last", "length", "list", "lower", "map", "max", "min", "pprint", "random", "reject", "rejectattr", "replace", "reverse", "round", "safe", "select", "selectattr", "slice", "sort", "string", "striptags", "sum", "title", "tojson", "trim", "truncate", "unique", "upper", "urlencode", "urlize", "wordcount", "wordwrap", "xmlattr" };
 pub const tests = [_][]const u8{ "odd", "even", "divisibleby", "defined", "undefined", "filter", "test", "none", "boolean", "false", "true", "integer", "float", "string", "mapping", "number", "sequence", "iterable", "callable", "sameas", "escaped", "in", "==", "eq", "equalto", "!=", "ne", ">", "gt", "greaterthan", ">=", "ge", "<", "lt", "lessthan", "<=", "le" };
 const jinja_tests = tests ++ [_][]const u8{ "lower", "upper" };
@@ -170,6 +171,7 @@ pub fn filter(c: *Ctx, name: []const u8, value: Value, pos: []const Value, kw: [
         return .{ .int = @intCast(v.len(value) orelse return rt.fail("object of type '{s}' has no len()", .{v.typeName(value)})) };
     }
     if (eq(u8, name, "string")) return .{ .str = try softStr(c, value) };
+    if (eq(u8, name, "float")) return float_filter.filter(c, value, pos, kw);
     if (eq(u8, name, "trim")) {
         const b = try bind(rt, "trim", &.{"chars"}, 0, pos, kw);
         return methods.strip(rt, try softStr(c, value), b[0]);

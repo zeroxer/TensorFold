@@ -192,7 +192,12 @@ pub const Lane = struct {
 
     pub fn load(d: *const Driver, capability_major: u32) !Lane {
         if (!kernels.available) return error.BuiltWithoutKernels;
-        var mod = try Module.load(d, kernels.qmmf);
+        return loadImage(d, capability_major, kernels.qmmf);
+    }
+
+    /// A development family may provide the same maintained image from its verified artifact directory.
+    pub fn loadImage(d: *const Driver, capability_major: u32, image: []const u8) !Lane {
+        var mod = try Module.load(d, image);
         errdefer mod.unload();
         var l: Lane = .{
             .mod = mod,

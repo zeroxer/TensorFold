@@ -1,0 +1,27 @@
+Inkling2 on four DGX Spark nodes: experimental source snapshot
+
+Base: ashhart/TensorFold aaac299d1d90c2625e54cb50f3f0d1494c1c33ea
+Checkpoint: thinkingmachines/Inkling-2-Small, revision e242a97e271095c11bc33ddb3850d37e22917343
+Toolchain: Zig 0.17.0; CUDA 13; SM121. Original mixed NVFP4/MXFP8/BF16/F32 weights.
+
+This branch adds the native Inkling2 family development CLI, weight and template handling,
+CUDA attention/quantization, native DSpark, shared-lane verification, and batched target rows.
+It is an experiment, not an upstream release or supported HTTP service.
+
+Recorded validation on the development source:
+- Family host checks: 67 passed.
+- CUDA host suite: 6526 passed, 33 skipped; 395 build steps completed.
+- Complete four-rank target logits, eight features, KV and convolution state matched the scalar
+  target in the tested batch/partial-acceptance/cancellation/reset cases.
+- The paired 26-input/63-output CLI workload measured 17.83 token/s plain and 32.65 token/s
+  with DSpark; the earlier scalar DSpark implementation measured 15.61 token/s.
+These are CLI measurements at a 1024-token context / 128-token generation cap, not a direct
+comparison to the separately measured 32K HTTP services. Other hardware/platforms remain untested.
+
+Known limit: the historical K/V convolution rounding assumption differs from the actual vLLM
+fused attention prologue. Full-model numeric equivalence and upstream release gates remain unmet.
+Vision, concurrent streams, sampling, grammar, logprobs and prefix resume are not implemented by
+this development adapter. Production family registration intentionally remains disabled.
+
+See zig/src/families/inkling2/README.txt and ABI.txt for build commands, chronology and provenance.
+The production choice remains the separately deployed vLLM native SM121 + DSpark7 service.

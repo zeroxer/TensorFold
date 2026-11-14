@@ -238,6 +238,7 @@ pub fn renderChat(gpa: Allocator, source: []const u8, messages: std.json.Value, 
 }
 
 test {
+    _ = @import("float_filter_test.zig");
     _ = @import("tests.zig");
     _ = @import("limits_test.zig");
     _ = @import("unicode.zig");

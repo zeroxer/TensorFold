@@ -81,6 +81,7 @@ pub fn targets(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bu
     @import("h3_host.zig").library(b, target, optimize, h3_image);
     const cuda = runtime(b, target, optimize, if (nvcc != null or prebuilt != null) &images else &.{});
     const mods = family(b, target, optimize, cuda, draft_ids);
+    @import("inkling2.zig").targets(b, target, optimize, cuda, mods.core, mods.lanes);
     const cli = b.createModule(.{ .root_source_file = b.path("zig/src/cli/cuda_main.zig"), .target = target, .optimize = optimize, .link_libc = true, .strip = strip });
     const native = engines(b, target, optimize, cuda, mods.core, mods.lanes, mods.nemotron, mods.heat, mods.qwen35, mods.qwen_vision);
     for ([_]struct { []const u8, *std.Build.Module }{ .{ "cuda", cuda }, .{ "core", mods.core }, .{ "lanes", mods.lanes }, .{ "nemotron", mods.nemotron }, .{ "dory", native.engines.import_table.get("dory").? }, .{ "cluster", @import("cluster_cuda.zig").module(b, target, optimize, mods.lanes, mods.core, native.canon, native.verbs) } }) |m| cli.addImport(m[0], m[1]);
@@ -194,6 +195,7 @@ pub fn nativeServer(b: *std.Build, target: std.Build.ResolvedTarget, optimize: s
 pub fn hostTests(b: *std.Build, draft_ids: *std.Build.Module, build_options: *std.Build.Step.Options, all: *std.Build.Step, server_steps: bool) void {
     const step = b.step("test-cuda-host", "The CUDA side's host unit tests alone (no GPU work)");
     all.dependOn(step);
+    @import("inkling2.zig").hostTests(b, step);
     @import("release_version.zig").tests(b, step);
     @import("environment.zig").tests(b, step);
     const flags = b.addRunArtifact(b.addTest(.{ .root_module = b.createModule(.{
